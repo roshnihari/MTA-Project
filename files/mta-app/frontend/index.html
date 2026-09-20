@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>NYC Subway Live</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --surface: #15181d;
+    --surface-2: #1e2228;
+    --text: #f2f3f5;
+    --muted: #9aa3ad;
+    --accent: #2f8fff;
+    --ok: #2ecc71;
+    --warn: #f5b400;
+    --bad: #ff5a5f;
+    --radius: 14px;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 12px;
+    background: linear-gradient(180deg, var(--bg) 60%, rgba(11,13,16,0));
+    z-index: 10;
+  }
+  h1 { font-size: 19px; margin: 0 0 10px; font-weight: 700; letter-spacing: -0.2px; }
+  .search {
+    display: flex;
+    gap: 8px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    border: 1px solid #262b32;
+  }
+  .search input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 16px;
+    outline: none;
+  }
+  main { padding: 0 16px 40px; max-width: 640px; margin: 0 auto; }
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    border: 1px solid #262b32;
+  }
+  .station-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .station-row:active { opacity: 0.7; }
+  .station-name { font-weight: 600; font-size: 15px; }
+  .station-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 4px;
+  }
+  .back {
+    color: var(--accent);
+    font-size: 15px;
+    cursor: pointer;
+    display: inline-block;
+    margin-bottom: 10px;
+  }
+  .alert-banner {
+    background: #3a2a08;
+    border: 1px solid #5c4210;
+    color: #ffd479;
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .alert-banner b { color: #ffe6a3; }
+  .arrival-group { margin-bottom: 14px; }
+  .arrival-group h3 {
+    font-size: 13px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 6px;
+  }
+  .arrival-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #23272e;
+    font-size: 14px;
+  }
+  .arrival-row:last-child { border-bottom: none; }
+  .eta { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .eta.ok { color: var(--ok); }
+  .eta.warn { color: var(--warn); }
+  .badge-delay {
+    font-size: 10px;
+    color: var(--bad);
+    border: 1px solid var(--bad);
+    border-radius: 6px;
+    padding: 1px 5px;
+    margin-left: 6px;
+  }
+  .muted { color: var(--muted); font-size: 13px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tab {
+    flex: 1;
+    text-align: center;
+    padding: 9px 0;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid #262b32;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .refresh-note { text-align: center; color: var(--muted); font-size: 11px; margin-top: 6px; }
+  select, input[type=text] {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid #262b32;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  button.primary {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .empty { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚇 NYC Subway Live</h1>
+  <div class="tabs">
+    <div class="tab active" data-tab="stations">Stations</div>
+    <div class="tab" data-tab="trip">Trip Helper</div>
+    <div class="tab" data-tab="alerts">Alerts</div>
+  </div>
+  <div id="search-wrap" class="search">
+    <input id="search" type="text" placeholder="Search a station (e.g. Union Sq)" autocomplete="off" />
+  </div>
+</header>
+<main id="app"></main>
+
+<script>
+const API = ""; // same-origin: backend serves this file itself
+
+const app = document.getElementById("app");
+const searchInput = document.getElementById("search");
+const searchWrap = document.getElementById("search-wrap");
+let currentTab = "stations";
+let currentStation = null;
+let refreshTimer = null;
+
+function setTab(tab) {
+  currentTab = tab;
+  currentStation = null;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+  searchWrap.style.display = tab === "stations" ? "flex" : "none";
+  clearInterval(refreshTimer);
+  if (tab === "stations") renderStationList("");
+  if (tab === "trip") renderTripHelper();
+  if (tab === "alerts") renderAlerts();
+}
+
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
+
+let searchDebounce;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => renderStationList(searchInput.value), 200);
+});
+
+async function fetchJSON(url) {
+  const res = await fetch(API + url);
+  if (!res.ok) throw new Error("Request failed: " + url);
+  return res.json();
+}
+
+function etaClass(minutes) {
+  if (minutes === null || minutes === undefined) return "";
+  if (minutes <= 3) return "ok";
+  if (minutes <= 8) return "warn";
+  return "";
+}
+
+function fmtEta(minutes) {
+  if (minutes === null || minutes === undefined) return "--";
+  if (minutes < 1) return "now";
+  return Math.round(minutes) + " min";
+}
+
+async function renderStationList(query) {
+  app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading stations…</div>`;
+  try {
+    const stations = await fetchJSON("/api/stations?q=" + encodeURIComponent(query));
+    if (!stations.length) {
+      app.innerHTML = query
+        ? `<div class="empty">No stations match "${escapeHtml(query)}"</div>`
+        : `<div class="empty">Start typing a station name above.</div>`;
+      return;
+    }
+    app.innerHTML = stations.slice(0, 40).map(s => `
+      <div class="card station-row" data-id="${escapeHtml(s.complex_id)}">
+        <div>
+          <div class="station-name">${escapeHtml(s.name)}</div>
+          <div class="station-meta">${escapeHtml(s.borough || "")} ${s.structure ? "· " + escapeHtml(s.structure) : ""}</div>
+        </div>
+        <div>${(s.routes || []).map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+      </div>
+    `).join("");
+    app.querySelectorAll(".station-row").forEach(row => {
+      row.addEventListener("click", () => openStation(row.dataset.id));
+    });
+  } catch (e) {
+    app.innerHTML = `<div class="empty">Couldn't load stations. Is the backend running?</div>`;
+  }
+}
+
+async function openStation(complexId) {
+  currentStation = complexId;
+  searchWrap.style.display = "none";
+  await renderStationDetail();
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(renderStationDetail, 20000);
+}
+
+async function renderStationDetail() {
+  if (!currentStation) return;
+  const isFirstLoad = !app.dataset.loadedFor || app.dataset.loadedFor !== currentStation;
+  if (isFirstLoad) {
+    app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading arrivals…</div>`;
+  }
+  try {
+    const [station, arrivals, allAlerts] = await Promise.all([
+      fetchJSON(`/api/stations/${encodeURIComponent(currentStation)}`),
+      fetchJSON(`/api/stations/${encodeURIComponent(currentStation)}/arrivals`),
+      fetchJSON(`/api/alerts`)
+    ]);
+    app.dataset.loadedFor = currentStation;
+
+    const relevantAlerts = allAlerts.filter(a => (station.routes || []).some(r => a.routes.includes(r)));
+
+    const grouped = {};
+    for (const a of arrivals.arrivals) {
+      const key = a.route_id + " · " + (a.direction === "N" ? "Uptown / Northbound" : "Downtown / Southbound");
+      (grouped[key] = grouped[key] || []).push(a);
+    }
+
+    const groupsHtml = Object.keys(grouped).sort().map(key => `
+      <div class="arrival-group">
+        <h3>${escapeHtml(key)}</h3>
+        <div class="card" style="padding:4px 16px;">
+          ${grouped[key].map(a => `
+            <div class="arrival-row">
+              <span>${escapeHtml(a.headsign || "")}${a.has_delay_alert ? '<span class="badge-delay">DELAY</span>' : ''}${a.rerouted ? '<span class="badge-delay" style="color:var(--warn);border-color:var(--warn);">REROUTE</span>' : ''}</span>
+              <span class="eta ${etaClass(a.minutes_away)}">${fmtEta(a.minutes_away)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `).join("");
+
+    app.innerHTML = `
+      <div class="back" id="back-btn">‹ All stations</div>
+      <h2 style="margin:0 0 4px;font-size:18px;">${escapeHtml(station.name)}</h2>
+      <div class="muted" style="margin-bottom:12px;">${escapeHtml(station.borough || "")}</div>
+      ${relevantAlerts.map(a => `<div class="alert-banner"><b>${escapeHtml(a.routes.join('/'))}:</b> ${escapeHtml(a.header)}</div>`).join("")}
+      ${groupsHtml || '<div class="empty">No upcoming trains found right now — try refreshing in a moment.</div>'}
+      <div class="refresh-note">Live · updates every 20s</div>
+    `;
+    document.getElementById("back-btn").addEventListener("click", () => {
+      clearInterval(refreshTimer);
+      delete app.dataset.loadedFor;
+      setTab("stations");
+    });
+  } catch (e) {
+    if (isFirstLoad) app.innerHTML = `<div class="empty">Couldn't load arrivals for this station.</div>`;
+  }
+}
+
+async function renderTripHelper() {
+  app.innerHTML = `
+    <div class="card">
+      <div class="muted" style="margin-bottom:8px;">Find lines connecting two stations, with live delay status.</div>
+      <input type="text" id="from-input" placeholder="From station" autocomplete="off" />
+      <div id="from-results"></div>
+      <input type="text" id="to-input" placeholder="To station" autocomplete="off" style="margin-top:6px;" />
+      <div id="to-results"></div>
+      <button class="primary" id="plan-btn" style="margin-top:10px;">Find routes</button>
+    </div>
+    <div id="trip-result"></div>
+  `;
+  let fromId = null, toId = null;
+  setupStationPicker("from-input", "from-results", id => fromId = id);
+  setupStationPicker("to-input", "to-results", id => toId = id);
+
+  document.getElementById("plan-btn").addEventListener("click", async () => {
+    const resultEl = document.getElementById("trip-result");
+    if (!fromId || !toId) {
+      resultEl.innerHTML = `<div class="empty">Pick a station from the dropdown suggestions for both fields.</div>`;
+      return;
+    }
+    resultEl.innerHTML = `<div class="muted" style="padding:14px 0;text-align:center;">Checking live status…</div>`;
+    try {
+      const plan = await fetchJSON(`/api/trip-plan?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`);
+      let html = "";
+      if (plan.direct_routes.length) {
+        html += `<div class="card"><b>Direct line(s):</b> ${plan.direct_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>`;
+      } else if (plan.transfer_options.length) {
+        html += plan.transfer_options.map(t => `
+          <div class="card">
+            <div>${t.first_leg_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")} to <b>${escapeHtml(t.via_station)}</b>, transfer to ${t.second_leg_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+          </div>
+        `).join("");
+      } else {
+        html += `<div class="empty">No obvious single-transfer route found — these stations may need a longer trip.</div>`;
+      }
+      if (plan.alerts.length) {
+        html += plan.alerts.map(a => `<div class="alert-banner"><b>${escapeHtml(a.routes.join('/'))}:</b> ${escapeHtml(a.header)}</div>`).join("");
+      }
+      resultEl.innerHTML = html;
+    } catch (e) {
+      resultEl.innerHTML = `<div class="empty">Couldn't plan this trip right now.</div>`;
+    }
+  });
+}
+
+function setupStationPicker(inputId, resultsId, onPick) {
+  const input = document.getElementById(inputId);
+  const results = document.getElementById(resultsId);
+  let debounce;
+  input.addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(async () => {
+      if (!input.value.trim()) { results.innerHTML = ""; return; }
+      const list = await fetchJSON("/api/stations?q=" + encodeURIComponent(input.value));
+      results.innerHTML = list.slice(0, 6).map(s => `
+        <div class="card station-row" style="padding:8px 12px;margin-bottom:4px;" data-id="${escapeHtml(s.complex_id)}">
+          <div class="station-name" style="font-size:13px;">${escapeHtml(s.name)}</div>
+        </div>
+      `).join("");
+      results.querySelectorAll(".station-row").forEach(row => {
+        row.addEventListener("click", () => {
+          input.value = row.querySelector(".station-name").textContent;
+          onPick(row.dataset.id);
+          results.innerHTML = "";
+        });
+      });
+    }, 200);
+  });
+}
+
+async function renderAlerts() {
+  app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading service alerts…</div>`;
+  try {
+    const alerts = await fetchJSON("/api/alerts");
+    if (!alerts.length) {
+      app.innerHTML = `<div class="empty">No active service alerts. 🎉</div>`;
+      return;
+    }
+    app.innerHTML = alerts.map(a => `
+      <div class="card">
+        <div style="margin-bottom:4px;">${(a.routes || []).map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+        <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(a.header)}</div>
+        <div class="muted">${escapeHtml(a.description || "")}</div>
+      </div>
+    `).join("");
+  } catch (e) {
+    app.innerHTML = `<div class="empty">Couldn't load alerts.</div>`;
+  }
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+setTab("stations");
+</script>
+</body>
+</html>
