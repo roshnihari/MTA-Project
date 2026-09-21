@@ -62,7 +62,18 @@
   }
   .station-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; }
   .station-row:active { opacity: 0.7; }
+  .station-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .station-name { font-weight: 600; font-size: 15px; }
+  .distance-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    background: rgba(47, 143, 255, 0.15);
+    border-radius: 999px;
+    padding: 2px 8px;
+    flex: none;
+    white-space: nowrap;
+  }
   .station-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .line-bullets { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 150px; }
 
@@ -174,7 +185,6 @@
     cursor: pointer;
   }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; }
-  .leg-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .filter-row {
     display: flex;
     gap: 6px;
@@ -205,12 +215,12 @@
   <h1>🚇 NYC Subway Live</h1>
   <div class="tabs">
     <div class="tab active" data-tab="stations">Stations</div>
-    <div class="tab" data-tab="trip">Trip Helper</div>
     <div class="tab" data-tab="alerts">Alerts</div>
   </div>
   <div id="search-wrap" class="search">
     <input id="search" type="text" placeholder="Search a station (e.g. Union Sq)" autocomplete="off" />
   </div>
+  <div id="location-note" class="muted" style="margin-top:6px;display:none;"></div>
 </header>
 <main id="app"></main>
 
@@ -245,6 +255,50 @@ function bulletsHtml(routes, size) {
   return (routes || []).map(r => bulletHtml(r, size)).join("");
 }
 
+// --- Geolocation: sort the Stations tab by walking distance once we have a fix ---
+let userLocation = null;      // { lat, lon } once granted
+let locationStatus = "pending"; // "pending" | "granted" | "denied" | "unsupported"
+
+function requestLocation() {
+  const note = document.getElementById("location-note");
+  if (!("geolocation" in navigator)) {
+    locationStatus = "unsupported";
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      userLocation = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      locationStatus = "granted";
+      if (note) note.style.display = "none";
+      if (currentTab === "stations" && !currentStation) renderStationList(searchInput.value);
+    },
+    () => {
+      locationStatus = "denied";
+      if (note) {
+        note.style.display = "block";
+        note.textContent = "Location unavailable — showing stations alphabetically. Enable location to sort by distance.";
+      }
+    },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+  );
+}
+
+// Haversine distance in miles -- good enough for "closest station" ranking; not true
+// walking distance (which would need routing over the street grid), but a solid proxy.
+function distanceMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function fmtDistance(miles) {
+  if (miles < 0.1) return "< 0.1 mi";
+  return miles.toFixed(1) + " mi";
+}
+
 const app = document.getElementById("app");
 const searchInput = document.getElementById("search");
 const searchWrap = document.getElementById("search-wrap");
@@ -259,7 +313,6 @@ function setTab(tab) {
   searchWrap.style.display = tab === "stations" ? "flex" : "none";
   clearInterval(refreshTimer);
   if (tab === "stations") renderStationList("");
-  if (tab === "trip") renderTripHelper();
   if (tab === "alerts") renderAlerts();
 }
 
@@ -305,16 +358,30 @@ function postedTimeLabel(isoString) {
 async function renderStationList(query) {
   app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading stations…</div>`;
   try {
-    const stationsList = await fetchJSON("/api/stations?q=" + encodeURIComponent(query));
+    let stationsList = await fetchJSON("/api/stations?q=" + encodeURIComponent(query));
     if (!stationsList.length) {
       app.innerHTML = `<div class="empty">No stations match "${escapeHtml(query)}"</div>`;
       return;
     }
+
+    // Sort by walking distance once we have a location fix; otherwise keep the
+    // backend's alphabetical order.
+    if (userLocation) {
+      stationsList = stationsList
+        .filter(s => s.lat != null && s.lon != null)
+        .map(s => ({ ...s, _distanceMiles: distanceMiles(userLocation.lat, userLocation.lon, s.lat, s.lon) }))
+        .sort((a, b) => a._distanceMiles - b._distanceMiles)
+        .concat(stationsList.filter(s => s.lat == null || s.lon == null));
+    }
+
     const shown = stationsList.slice(0, 60);
     app.innerHTML = shown.map(s => `
       <div class="card station-row" data-id="${escapeHtml(s.complex_id)}">
         <div>
-          <div class="station-name">${escapeHtml(s.name)}</div>
+          <div class="station-name-row">
+            <span class="station-name">${escapeHtml(s.name)}</span>
+            ${s._distanceMiles != null ? `<span class="distance-badge">${escapeHtml(fmtDistance(s._distanceMiles))}</span>` : ""}
+          </div>
           <div class="station-meta">${escapeHtml(s.borough || "")} ${s.structure ? "· " + escapeHtml(s.structure) : ""}</div>
         </div>
         <div class="line-bullets">${bulletsHtml(s.routes, "small")}</div>
@@ -432,84 +499,6 @@ async function renderStationDetail() {
   }
 }
 
-async function renderTripHelper() {
-  app.innerHTML = `
-    <div class="card">
-      <div class="muted" style="margin-bottom:8px;">Find lines connecting two stations, with live delay status.</div>
-      <input type="text" id="from-input" placeholder="From station" autocomplete="off" />
-      <div id="from-results"></div>
-      <input type="text" id="to-input" placeholder="To station" autocomplete="off" style="margin-top:6px;" />
-      <div id="to-results"></div>
-      <button class="primary" id="plan-btn" style="margin-top:10px;">Find routes</button>
-    </div>
-    <div id="trip-result"></div>
-  `;
-  let fromId = null, toId = null;
-  setupStationPicker("from-input", "from-results", id => fromId = id);
-  setupStationPicker("to-input", "to-results", id => toId = id);
-
-  document.getElementById("plan-btn").addEventListener("click", async () => {
-    const resultEl = document.getElementById("trip-result");
-    if (!fromId || !toId) {
-      resultEl.innerHTML = `<div class="empty">Pick a station from the dropdown suggestions for both fields.</div>`;
-      return;
-    }
-    resultEl.innerHTML = `<div class="muted" style="padding:14px 0;text-align:center;">Checking live status…</div>`;
-    try {
-      const plan = await fetchJSON(`/api/trip-plan?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`);
-      let html = "";
-      if (plan.direct_routes.length) {
-        html += `<div class="card"><div class="muted" style="margin-bottom:6px;">Direct line(s)</div><div class="line-bullets" style="justify-content:flex-start;max-width:none;">${bulletsHtml(plan.direct_routes)}</div></div>`;
-      } else if (plan.transfer_options.length) {
-        html += plan.transfer_options.map(t => `
-          <div class="card">
-            <div class="leg-line">${bulletsHtml(t.first_leg_routes)}<span>to</span><b>${escapeHtml(t.via_station)}</b><span>, transfer to</span>${bulletsHtml(t.second_leg_routes)}</div>
-          </div>
-        `).join("");
-      } else {
-        html += `<div class="empty">No obvious single-transfer route found — these stations may need a longer trip.</div>`;
-      }
-      if (plan.alerts.length) {
-        html += plan.alerts.map(a => `
-          <div class="alert-banner">
-            <div class="bullets">${bulletsHtml(a.routes, "small")}</div>
-            <div>${escapeHtml(a.header)}</div>
-          </div>
-        `).join("");
-      }
-      resultEl.innerHTML = html;
-    } catch (e) {
-      resultEl.innerHTML = `<div class="empty">Couldn't plan this trip right now.</div>`;
-    }
-  });
-}
-
-function setupStationPicker(inputId, resultsId, onPick) {
-  const input = document.getElementById(inputId);
-  const results = document.getElementById(resultsId);
-  let debounce;
-  input.addEventListener("input", () => {
-    clearTimeout(debounce);
-    debounce = setTimeout(async () => {
-      if (!input.value.trim()) { results.innerHTML = ""; return; }
-      const list = await fetchJSON("/api/stations?q=" + encodeURIComponent(input.value));
-      results.innerHTML = list.slice(0, 6).map(s => `
-        <div class="card station-row" style="padding:8px 12px;margin-bottom:4px;" data-id="${escapeHtml(s.complex_id)}">
-          <div class="station-name" style="font-size:13px;">${escapeHtml(s.name)}</div>
-          <div class="line-bullets">${bulletsHtml(s.routes, "small")}</div>
-        </div>
-      `).join("");
-      results.querySelectorAll(".station-row").forEach(row => {
-        row.addEventListener("click", () => {
-          input.value = row.querySelector(".station-name").textContent;
-          onPick(row.dataset.id);
-          results.innerHTML = "";
-        });
-      });
-    }, 200);
-  });
-}
-
 const ALL_FILTERABLE_LINES = ["1","2","3","4","5","6","7","A","C","E","B","D","F","M","G","J","Z","L","N","Q","R","W","S","SIR"];
 let alertsLineFilter = null; // null = All
 
@@ -573,6 +562,7 @@ function escapeHtml(str) {
 }
 
 setTab("stations");
+requestLocation();
 </script>
 </body>
 </html>
