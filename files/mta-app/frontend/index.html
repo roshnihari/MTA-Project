@@ -175,6 +175,29 @@
   }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; }
   .leg-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .filter-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 10px;
+    margin-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-chip {
+    flex: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid #262b32;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .filter-chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .filter-chip.bullet-chip { min-width: 34px; text-align: center; }
 </style>
 </head>
 <body>
@@ -267,6 +290,18 @@ function fmtEta(minutes) {
   return Math.round(minutes) + " min";
 }
 
+function postedTimeLabel(isoString) {
+  if (!isoString) return "";
+  const posted = new Date(isoString);
+  if (isNaN(posted)) return "";
+  const diffMinutes = Math.round((Date.now() - posted.getTime()) / 60000);
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return posted.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 async function renderStationList(query) {
   app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading stations…</div>`;
   try {
@@ -318,7 +353,22 @@ async function renderStationDetail() {
     ]);
     app.dataset.loadedFor = currentStation;
 
-    const relevantAlerts = allAlerts.filter(a => (station.routes || []).some(r => a.routes.includes(r)));
+    // Alerts endpoint already returns most-recent-first. Cap to the 3 freshest alerts
+    // per line at this station, then de-dupe (one alert can cover multiple lines).
+    const perLine = {};
+    for (const route of station.routes || []) {
+      perLine[route] = allAlerts.filter(a => a.routes.includes(route)).slice(0, 3);
+    }
+    const seenAlertIds = new Set();
+    const relevantAlerts = [];
+    for (const route of station.routes || []) {
+      for (const a of perLine[route] || []) {
+        if (!seenAlertIds.has(a.id)) {
+          seenAlertIds.add(a.id);
+          relevantAlerts.push(a);
+        }
+      }
+    }
 
     const grouped = {};
     for (const a of arrivals.arrivals) {
@@ -363,7 +413,10 @@ async function renderStationDetail() {
       ${relevantAlerts.map(a => `
         <div class="alert-banner">
           <div class="bullets">${bulletsHtml(a.routes, "small")}</div>
-          <div>${escapeHtml(a.header)}</div>
+          <div style="flex:1;">
+            <div>${escapeHtml(a.header)}</div>
+            <div class="muted" style="margin-top:2px;">${escapeHtml(postedTimeLabel(a.posted_at))}</div>
+          </div>
         </div>
       `).join("")}
       ${groupsHtml || '<div class="empty">No upcoming trains found right now — try refreshing in a moment.</div>'}
@@ -457,23 +510,59 @@ function setupStationPicker(inputId, resultsId, onPick) {
   });
 }
 
+const ALL_FILTERABLE_LINES = ["1","2","3","4","5","6","7","A","C","E","B","D","F","M","G","J","Z","L","N","Q","R","W","S","SIR"];
+let alertsLineFilter = null; // null = All
+
 async function renderAlerts() {
-  app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading service alerts…</div>`;
+  app.innerHTML = `
+    <div class="filter-row" id="alerts-filter"></div>
+    <div id="alerts-list"><div class="muted" style="padding:20px 0;text-align:center;">Loading service alerts…</div></div>
+  `;
+  renderAlertsFilterRow();
+  await loadAlertsList();
+}
+
+function renderAlertsFilterRow() {
+  const row = document.getElementById("alerts-filter");
+  const allChip = `<div class="filter-chip${alertsLineFilter === null ? ' active' : ''}" data-route="">All</div>`;
+  const chips = ALL_FILTERABLE_LINES.map(r => {
+    const bg = LINE_COLORS[r] || "#4d5a68";
+    const fg = DARK_TEXT_LINES.has(r) ? "#1a1a1a" : "#ffffff";
+    const activeStyle = alertsLineFilter === r ? `background:${bg};color:${fg};border-color:${bg};` : "";
+    return `<div class="filter-chip bullet-chip" data-route="${escapeHtml(r)}" style="${activeStyle}">${escapeHtml(r)}</div>`;
+  }).join("");
+  row.innerHTML = allChip + chips;
+  row.querySelectorAll(".filter-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      alertsLineFilter = chip.dataset.route || null;
+      renderAlertsFilterRow();
+      loadAlertsList();
+    });
+  });
+}
+
+async function loadAlertsList() {
+  const listEl = document.getElementById("alerts-list");
+  listEl.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading service alerts…</div>`;
   try {
-    const alertsList = await fetchJSON("/api/alerts");
+    const url = alertsLineFilter ? `/api/alerts?route=${encodeURIComponent(alertsLineFilter)}` : "/api/alerts";
+    const alertsList = await fetchJSON(url);
     if (!alertsList.length) {
-      app.innerHTML = `<div class="empty">No active service alerts. 🎉</div>`;
+      listEl.innerHTML = `<div class="empty">No active alerts${alertsLineFilter ? " for the " + escapeHtml(alertsLineFilter) + " line" : ""}. 🎉</div>`;
       return;
     }
-    app.innerHTML = alertsList.map(a => `
+    listEl.innerHTML = alertsList.map(a => `
       <div class="card">
-        <div class="line-bullets" style="justify-content:flex-start;max-width:none;margin-bottom:6px;">${bulletsHtml(a.routes)}</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px;">
+          <div class="line-bullets" style="justify-content:flex-start;max-width:none;">${bulletsHtml(a.routes)}</div>
+          <div class="muted" style="white-space:nowrap;font-size:12px;">${escapeHtml(postedTimeLabel(a.posted_at))}</div>
+        </div>
         <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(a.header)}</div>
         <div class="muted">${escapeHtml(a.description || "")}</div>
       </div>
     `).join("");
   } catch (e) {
-    app.innerHTML = `<div class="empty">Couldn't load alerts.</div>`;
+    listEl.innerHTML = `<div class="empty">Couldn't load alerts.</div>`;
   }
 }
 

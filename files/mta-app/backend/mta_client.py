@@ -169,13 +169,24 @@ def _fetch_alerts():
         header = alert.header_text.translation[0].text if alert.header_text.translation else ""
         description = alert.description_text.translation[0].text if alert.description_text.translation else ""
         routes = sorted({ie.route_id for ie in alert.informed_entity if ie.route_id})
+
+        # GTFS-realtime doesn't have an explicit "posted at" field, but each alert's
+        # active_period.start is the standard signal for when it took effect -- the
+        # earliest one across periods is the closest equivalent to a post time.
+        starts = [p.start for p in alert.active_period if p.start]
+        posted_at = datetime.fromtimestamp(min(starts)).isoformat() if starts else None
+
         alerts.append({
             "id": entity.id,
             "header": header,
             "description": description,
             "routes": routes,
             "effect": gtfs_realtime_pb2.Alert.Effect.Name(alert.effect) if alert.effect is not None else None,
+            "posted_at": posted_at,
         })
+
+    # Most recent first, so any "top N" trimming downstream keeps the freshest alerts.
+    alerts.sort(key=lambda a: a["posted_at"] or "", reverse=True)
     return alerts
 
 
