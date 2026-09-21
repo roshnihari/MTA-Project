@@ -60,24 +60,30 @@
     margin-bottom: 10px;
     border: 1px solid #262b32;
   }
-  .station-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .station-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; }
   .station-row:active { opacity: 0.7; }
   .station-name { font-weight: 600; font-size: 15px; }
   .station-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .pill {
+  .line-bullets { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 150px; }
+
+  /* Official-style MTA line bullet: a solid circle in that line's color, bold letter/number,
+     text color switches for the light backgrounds (yellow / grey lines) to stay readable. */
+  .bullet {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    background: var(--surface-2);
-    color: var(--text);
-    font-size: 12px;
-    font-weight: 700;
-    margin-right: 4px;
+    font-size: 13px;
+    font-weight: 800;
+    font-family: Helvetica, Arial, sans-serif;
+    line-height: 1;
+    flex: none;
   }
+  .bullet.small { width: 20px; height: 20px; font-size: 11px; }
+  .bullet.large { width: 34px; height: 34px; font-size: 16px; }
+
   .back {
     color: var(--accent);
     font-size: 15px;
@@ -93,15 +99,19 @@
     padding: 10px 14px;
     font-size: 13px;
     margin-bottom: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
   }
   .alert-banner b { color: #ffe6a3; }
+  .alert-banner .bullets { display: flex; gap: 4px; flex-wrap: wrap; flex: none; margin-top: 1px; }
   .arrival-group { margin-bottom: 14px; }
-  .arrival-group h3 {
+  .arrival-group-head { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+  .arrival-group-head .label {
     font-size: 13px;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin: 0 0 6px;
   }
   .arrival-row {
     display: flex;
@@ -110,9 +120,12 @@
     padding: 8px 0;
     border-bottom: 1px solid #23272e;
     font-size: 14px;
+    gap: 10px;
   }
   .arrival-row:last-child { border-bottom: none; }
-  .eta { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .arrival-headsign { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .arrival-headsign span.text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .eta { font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
   .eta.ok { color: var(--ok); }
   .eta.warn { color: var(--warn); }
   .badge-delay {
@@ -122,6 +135,7 @@
     border-radius: 6px;
     padding: 1px 5px;
     margin-left: 6px;
+    flex: none;
   }
   .muted { color: var(--muted); font-size: 13px; }
   .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -160,6 +174,7 @@
     cursor: pointer;
   }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; }
+  .leg-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -178,6 +193,34 @@
 
 <script>
 const API = ""; // same-origin: backend serves this file itself
+
+// Official MTA line-bullet colors (per the MTA brand guide). Text color flips to black
+// for the light backgrounds (the N/Q/R/W yellow and the L/shuttle greys) to stay legible.
+const LINE_COLORS = {
+  "1": "#EE352E", "2": "#EE352E", "3": "#EE352E",
+  "4": "#00933C", "5": "#00933C", "6": "#00933C", "6X": "#00933C",
+  "7": "#B933AD", "7X": "#B933AD",
+  "A": "#0039A6", "C": "#0039A6", "E": "#0039A6",
+  "B": "#FF6319", "D": "#FF6319", "F": "#FF6319", "FX": "#FF6319", "M": "#FF6319",
+  "G": "#6CBE45",
+  "J": "#996633", "Z": "#996633",
+  "L": "#A7A9AC",
+  "N": "#FCCC0A", "Q": "#FCCC0A", "R": "#FCCC0A", "W": "#FCCC0A",
+  "S": "#808183", "GS": "#808183", "FS": "#808183", "H": "#808183",
+  "SIR": "#0039A6", "SI": "#0039A6",
+};
+const DARK_TEXT_LINES = new Set(["N", "Q", "R", "W", "L"]);
+
+function bulletHtml(route, size) {
+  const bg = LINE_COLORS[route] || "#4d5a68";
+  const fg = DARK_TEXT_LINES.has(route) ? "#1a1a1a" : "#ffffff";
+  const sizeClass = size ? ` ${size}` : "";
+  return `<span class="bullet${sizeClass}" style="background:${bg};color:${fg};">${escapeHtml(route)}</span>`;
+}
+
+function bulletsHtml(routes, size) {
+  return (routes || []).map(r => bulletHtml(r, size)).join("");
+}
 
 const app = document.getElementById("app");
 const searchInput = document.getElementById("search");
@@ -227,22 +270,23 @@ function fmtEta(minutes) {
 async function renderStationList(query) {
   app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading stations…</div>`;
   try {
-    const stations = await fetchJSON("/api/stations?q=" + encodeURIComponent(query));
-    if (!stations.length) {
-      app.innerHTML = query
-        ? `<div class="empty">No stations match "${escapeHtml(query)}"</div>`
-        : `<div class="empty">Start typing a station name above.</div>`;
+    const stationsList = await fetchJSON("/api/stations?q=" + encodeURIComponent(query));
+    if (!stationsList.length) {
+      app.innerHTML = `<div class="empty">No stations match "${escapeHtml(query)}"</div>`;
       return;
     }
-    app.innerHTML = stations.slice(0, 40).map(s => `
+    const shown = stationsList.slice(0, 60);
+    app.innerHTML = shown.map(s => `
       <div class="card station-row" data-id="${escapeHtml(s.complex_id)}">
         <div>
           <div class="station-name">${escapeHtml(s.name)}</div>
           <div class="station-meta">${escapeHtml(s.borough || "")} ${s.structure ? "· " + escapeHtml(s.structure) : ""}</div>
         </div>
-        <div>${(s.routes || []).map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+        <div class="line-bullets">${bulletsHtml(s.routes, "small")}</div>
       </div>
-    `).join("");
+    `).join("") + (stationsList.length > shown.length
+      ? `<div class="muted" style="text-align:center;padding:10px 0;">${stationsList.length - shown.length} more — keep typing to narrow it down</div>`
+      : "");
     app.querySelectorAll(".station-row").forEach(row => {
       row.addEventListener("click", () => openStation(row.dataset.id));
     });
@@ -254,6 +298,7 @@ async function renderStationList(query) {
 async function openStation(complexId) {
   currentStation = complexId;
   searchWrap.style.display = "none";
+  delete app.dataset.loadedFor;
   await renderStationDetail();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(renderStationDetail, 20000);
@@ -277,29 +322,50 @@ async function renderStationDetail() {
 
     const grouped = {};
     for (const a of arrivals.arrivals) {
-      const key = a.route_id + " · " + (a.direction === "N" ? "Uptown / Northbound" : "Downtown / Southbound");
+      const key = a.route_id + "|" + (a.direction === "N" ? "Uptown / Northbound" : "Downtown / Southbound");
       (grouped[key] = grouped[key] || []).push(a);
     }
 
-    const groupsHtml = Object.keys(grouped).sort().map(key => `
-      <div class="arrival-group">
-        <h3>${escapeHtml(key)}</h3>
-        <div class="card" style="padding:4px 16px;">
-          ${grouped[key].map(a => `
-            <div class="arrival-row">
-              <span>${escapeHtml(a.headsign || "")}${a.has_delay_alert ? '<span class="badge-delay">DELAY</span>' : ''}${a.rerouted ? '<span class="badge-delay" style="color:var(--warn);border-color:var(--warn);">REROUTE</span>' : ''}</span>
-              <span class="eta ${etaClass(a.minutes_away)}">${fmtEta(a.minutes_away)}</span>
-            </div>
-          `).join("")}
+    const groupKeys = Object.keys(grouped).sort();
+    const groupsHtml = groupKeys.map(key => {
+      const [route, dirLabel] = key.split("|");
+      return `
+        <div class="arrival-group">
+          <div class="arrival-group-head">
+            ${bulletHtml(route)}
+            <span class="label">${escapeHtml(dirLabel)}</span>
+          </div>
+          <div class="card" style="padding:4px 16px;">
+            ${grouped[key].map(a => `
+              <div class="arrival-row">
+                <span class="arrival-headsign">
+                  <span class="text">${escapeHtml(a.headsign || "")}</span>
+                  ${a.has_delay_alert ? '<span class="badge-delay">DELAY</span>' : ''}
+                  ${a.rerouted ? '<span class="badge-delay" style="color:var(--warn);border-color:var(--warn);">REROUTE</span>' : ''}
+                </span>
+                <span class="eta ${etaClass(a.minutes_away)}">${fmtEta(a.minutes_away)}</span>
+              </div>
+            `).join("")}
+          </div>
         </div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
 
     app.innerHTML = `
       <div class="back" id="back-btn">‹ All stations</div>
-      <h2 style="margin:0 0 4px;font-size:18px;">${escapeHtml(station.name)}</h2>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <h2 style="margin:0;font-size:18px;">${escapeHtml(station.name)}</h2>
+      </div>
+      <div class="line-bullets" style="justify-content:flex-start;max-width:none;margin-bottom:10px;">
+        ${bulletsHtml(station.routes)}
+      </div>
       <div class="muted" style="margin-bottom:12px;">${escapeHtml(station.borough || "")}</div>
-      ${relevantAlerts.map(a => `<div class="alert-banner"><b>${escapeHtml(a.routes.join('/'))}:</b> ${escapeHtml(a.header)}</div>`).join("")}
+      ${relevantAlerts.map(a => `
+        <div class="alert-banner">
+          <div class="bullets">${bulletsHtml(a.routes, "small")}</div>
+          <div>${escapeHtml(a.header)}</div>
+        </div>
+      `).join("")}
       ${groupsHtml || '<div class="empty">No upcoming trains found right now — try refreshing in a moment.</div>'}
       <div class="refresh-note">Live · updates every 20s</div>
     `;
@@ -340,18 +406,23 @@ async function renderTripHelper() {
       const plan = await fetchJSON(`/api/trip-plan?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`);
       let html = "";
       if (plan.direct_routes.length) {
-        html += `<div class="card"><b>Direct line(s):</b> ${plan.direct_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>`;
+        html += `<div class="card"><div class="muted" style="margin-bottom:6px;">Direct line(s)</div><div class="line-bullets" style="justify-content:flex-start;max-width:none;">${bulletsHtml(plan.direct_routes)}</div></div>`;
       } else if (plan.transfer_options.length) {
         html += plan.transfer_options.map(t => `
           <div class="card">
-            <div>${t.first_leg_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")} to <b>${escapeHtml(t.via_station)}</b>, transfer to ${t.second_leg_routes.map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+            <div class="leg-line">${bulletsHtml(t.first_leg_routes)}<span>to</span><b>${escapeHtml(t.via_station)}</b><span>, transfer to</span>${bulletsHtml(t.second_leg_routes)}</div>
           </div>
         `).join("");
       } else {
         html += `<div class="empty">No obvious single-transfer route found — these stations may need a longer trip.</div>`;
       }
       if (plan.alerts.length) {
-        html += plan.alerts.map(a => `<div class="alert-banner"><b>${escapeHtml(a.routes.join('/'))}:</b> ${escapeHtml(a.header)}</div>`).join("");
+        html += plan.alerts.map(a => `
+          <div class="alert-banner">
+            <div class="bullets">${bulletsHtml(a.routes, "small")}</div>
+            <div>${escapeHtml(a.header)}</div>
+          </div>
+        `).join("");
       }
       resultEl.innerHTML = html;
     } catch (e) {
@@ -372,6 +443,7 @@ function setupStationPicker(inputId, resultsId, onPick) {
       results.innerHTML = list.slice(0, 6).map(s => `
         <div class="card station-row" style="padding:8px 12px;margin-bottom:4px;" data-id="${escapeHtml(s.complex_id)}">
           <div class="station-name" style="font-size:13px;">${escapeHtml(s.name)}</div>
+          <div class="line-bullets">${bulletsHtml(s.routes, "small")}</div>
         </div>
       `).join("");
       results.querySelectorAll(".station-row").forEach(row => {
@@ -388,14 +460,14 @@ function setupStationPicker(inputId, resultsId, onPick) {
 async function renderAlerts() {
   app.innerHTML = `<div class="muted" style="padding:20px 0;text-align:center;">Loading service alerts…</div>`;
   try {
-    const alerts = await fetchJSON("/api/alerts");
-    if (!alerts.length) {
+    const alertsList = await fetchJSON("/api/alerts");
+    if (!alertsList.length) {
       app.innerHTML = `<div class="empty">No active service alerts. 🎉</div>`;
       return;
     }
-    app.innerHTML = alerts.map(a => `
+    app.innerHTML = alertsList.map(a => `
       <div class="card">
-        <div style="margin-bottom:4px;">${(a.routes || []).map(r => `<span class="pill">${escapeHtml(r)}</span>`).join("")}</div>
+        <div class="line-bullets" style="justify-content:flex-start;max-width:none;margin-bottom:6px;">${bulletsHtml(a.routes)}</div>
         <div style="font-weight:600;margin-bottom:4px;">${escapeHtml(a.header)}</div>
         <div class="muted">${escapeHtml(a.description || "")}</div>
       </div>

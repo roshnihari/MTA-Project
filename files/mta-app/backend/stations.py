@@ -38,6 +38,10 @@ def _load_complexes_from_mta():
         complex_id = row.get("complex_id")
         if not complex_id:
             continue
+        # The Socrata API returns "number"-typed columns as JSON numbers, but this id is
+        # used as a URL path segment everywhere else -- keep it a string consistently so
+        # lookups by the id FastAPI parses out of a URL always hit.
+        complex_id = str(complex_id)
         gtfs_stop_ids = [s.strip() for s in row.get("gtfs_stop_ids", "").split(";") if s.strip()]
         routes = row.get("daytime_routes", "")
         borough_code = row.get("borough", "")
@@ -109,15 +113,19 @@ def load_all(force=False):
 
 def get_all_stations():
     load_all()
-    return list(_cache["complexes"].values())
+    # The upstream dataset's row order is arbitrary (it happens to cluster numbered-line
+    # stations first) -- sort alphabetically so every line is represented right away
+    # rather than only whatever the raw JSON order front-loads.
+    return sorted(_cache["complexes"].values(), key=lambda c: c["name"].lower())
 
 
 def search_stations(query):
     load_all()
     q = query.strip().lower()
     if not q:
-        return []
-    return [c for c in _cache["complexes"].values() if q in c["name"].lower()]
+        return get_all_stations()
+    matches = [c for c in _cache["complexes"].values() if q in c["name"].lower()]
+    return sorted(matches, key=lambda c: c["name"].lower())
 
 
 def get_complex(complex_id):
